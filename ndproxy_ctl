@@ -1,0 +1,177 @@
+#!/bin/bash
+# ndproxy_ctl: simplify the job of setup ndp proxy
+# https://github.com/gidcs/ndproxy_ctl
+# ndproxy_ctl
+
+CONF="/etc/ndproxy_ctl"
+NDPROXY_CONF="${CONF}/ndproxy"
+LOADED_FLAG="${CONF}/loaded"
+NET_DIR="/sys/class/net"
+
+if [ ! -d ${CONF} ]; then
+    mkdir ${CONF}
+fi
+if [ ! -f ${NDPROXY_CONF} ]; then
+    touch ${NDPROXY_CONF}
+fi
+if [ ! -f ${FORWARD_CONF} ]; then
+    touch ${FORWARD_CONF}
+fi
+
+function help {
+    case $1 in
+        "add_ndproxy")
+            echo "Usage: "
+            echo "ndproxy_ctl add <in_interface> <out_interface> <ipv6>"
+            ;;
+        "del_ndproxy")
+            echo "Usage: "
+            echo "ndproxy_ctl del <in_interface> <out_interface> <ipv6>"
+            ;;
+        *)
+            echo "Usage: "
+            echo "ndproxy_ctl load"
+            echo "ndproxy_ctl unload"
+            echo "ndproxy_ctl reload"
+            echo "ndproxy_ctl list"
+            echo "ndproxy_ctl add <in_interface> <out_interface> <ipv6>"
+            echo "ndproxy_ctl del <in_interface> <out_interface> <ipv6>"
+            echo " "
+            echo "Example: "
+            echo "ndproxy_ctl list"
+            echo "ndproxy_ctl add vmbr0 eth0 1234:1234:56:7890::1"
+            echo "ndproxy_ctl del vmbr0 eth0 1234:1234:56:7890::1"
+            ;;
+    esac
+    exit 1
+}
+
+function exit_echo {
+    echo $1
+    exit 1
+}
+
+function valid_interface {
+    interface=$1
+    if [ -e "${NET_DIR}/${interface}" ]; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
+function list_ndproxy {
+    echo "in_interface out_interface ipv6"
+    echo "-------------------------------"
+    cat ${NDPROXY_CONF}
+}
+
+function add_ndproxy {
+    in_interface=$1
+    out_interface=$2
+    ipv6=$3
+    ret=`cat ${NDPROXY_CONF} | awk -vIP=${ipv6} '{ if($3==IP) print $1":"$2 }'`
+    if [ -z "${ret}" ]; then
+    	/sbin/ip -f inet6 route add ${ipv6} dev ${in_interface} && \
+        /sbin/ip -f inet6 neigh add proxy ${ipv6} dev ${out_interface}
+        if [ "$?" == "0" ]; then
+            echo "${in_interface} ${out_interface} ${ipv6}" >> ${NDPROXY_CONF}
+            echo "The entry is added."
+        else
+            help "add_ndproxy"
+        fi
+    else
+        if [ "${ret}" == "${in_interface}:${out_interface}" ]; then
+            echo "The entry exists."
+        else
+            echo "Conflict found."
+            echo "Existed in_interface:out_interface: ${ret}."
+        fi
+    fi
+}
+
+function del_ndproxy {
+    in_interface=$1
+    out_interface=$2
+    ipv6=$3
+    ret=`cat ${NDPROXY_CONF} | awk -vIP=${ipv6} \
+    	-vIIF=${in_interface} -vOIF=${out_interface} '{ if($1==IIF && $2==OIF && $3==IP) print $3 }'`
+    if [ -z "${ret}" ]; then
+        echo "The entry does not exist."
+    else
+        /sbin/ip -f inet6 route del ${ipv6} dev ${in_interface} && \
+        /sbin/ip -f inet6 neigh del proxy ${ipv6} dev ${out_interface}
+        if [ "$?" == "0" ]; then
+            grep -v "${in_interface} ${out_interface} ${ipv6}" ${NDPROXY_CONF} > ${NDPROXY_CONF}.bak
+            mv ${NDPROXY_CONF}.bak ${NDPROXY_CONF}
+            echo "The entry is deleted."
+        else
+            help "del_ndproxy"
+        fi
+    fi
+}
+
+function ndproxy_load {
+    if [ -f ${LOADED_FLAG} ]; then
+        exit_echo "ndproxy has already loaded."
+    fi
+    cat ${NDPROXY_CONF} | awk '{ system("/sbin/ip -f inet6 route add "$3" dev "$1); \
+    system("/sbin/ip -f inet6 neigh add proxy "$3" dev "$2); }'
+    touch ${LOADED_FLAG}
+    echo "ndproxy is loaded."
+}
+
+function ndproxy_unload {
+    if [ "$1" != "force" ] ; then
+        if [ ! -f ${LOADED_FLAG} ]; then
+            exit_echo "ndproxy has not loaded yet."
+        fi
+    fi
+    cat ${NDPROXY_CONF} | awk '{ system("/sbin/ip -f inet6 route del "$3" dev "$1); \
+    	system("/sbin/ip -f inet6 neigh add proxy "$3" dev "$2); }'
+    rm -f ${LOADED_FLAG}
+    echo "ndproxy is unloaded."
+}
+
+case $1 in
+    "load")
+        ndproxy_load
+        ;;
+    "unload")
+        ndproxy_unload
+        ;;
+    "reload")
+        ndproxy_unload "force"
+        ndproxy_load
+        ;;
+    "list")
+        list_ndproxy
+        ;;
+    "add")
+        if [ $# -ne 4 ]; then
+            help "add_ndproxy"
+        fi
+        if [ "`valid_interface $2`" == "0" ]; then
+            exit_echo "Invalid out_interface: $2"
+        fi
+        if [ "`valid_interface $3`" == "0" ]; then
+            exit_echo "Invalid out_interface: $3"
+        fi
+        add_ndproxy $2 $3 $4
+        ;;
+    "del")
+        if [ $# -ne 4 ]; then
+            help "del_ndproxy"
+        fi
+        if [ "`valid_interface $2`" == "0" ]; then
+            exit_echo "Invalid out_interface: $2"
+        fi
+        if [ "`valid_interface $3`" == "0" ]; then
+            exit_echo "Invalid out_interface: $3"
+        fi
+        del_ndproxy $2 $3 $4
+        ;;
+    *)
+        help
+        ;;
+esac
