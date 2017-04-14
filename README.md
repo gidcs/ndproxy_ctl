@@ -1,5 +1,5 @@
 # ndproxy_ctl
-ndproxy_ctl is a tool designed for simplifing the job of setup ndp proxy. This tools is designed for proxmox, but it should works on other distributions. You need to add post-up and post-down manually after your network interfaces configuration in order to make the rules always loaded.
+ndproxy_ctl is a tool designed for simplifying the job of setting ndp proxy. This tools is designed for proxmox, but it should works on other distributions. You need to add post-up and post-down manually after your network interfaces configuration in order to make the rules always loaded.
 
 ## Usage
 	
